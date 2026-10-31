@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UAC Care Load Analytics</title>
+<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
+<style>
+:root{--bg:#0e1117;--panel:#161b26;--line:#262d3d;--tx:#e6e9f0;--mut:#8b93a7;--ac:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{display:flex;min-height:100vh}
+aside{width:250px;background:var(--panel);padding:18px;border-right:1px solid var(--line);flex-shrink:0}
+aside h2{font-size:16px;margin:0 0 4px}aside small{color:var(--mut)}
+aside label{display:block;font-size:12px;color:var(--mut);margin:16px 0 6px}
+aside input[type=date],aside select{width:100%;padding:7px;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;color:var(--tx)}
+main{flex:1;padding:24px 28px;min-width:0}
+h1{font-size:24px;margin:0 0 4px}.sub{color:var(--mut);font-size:12px;margin-bottom:18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi span{font-size:12px;color:var(--mut)}.kpi b{display:block;font-size:24px;margin-top:4px;font-weight:600}
+.kpi i{font-size:11px;color:var(--mut);font-style:normal}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
+.tabs button{background:none;border:0;color:var(--mut);padding:9px 14px;cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--tx);border-color:var(--ac)}
+.pane{display:none}.pane.on{display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+h3{font-size:15px;margin:10px 0 4px}
+.ch{height:340px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}
+th{color:var(--mut)}
+.note{font-size:12px;color:var(--mut);margin:8px 0 14px;line-height:1.5}
+@media(max-width:900px){.wrap{flex-direction:column}aside{width:100%}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<aside>
+  <h2>🏥 UAC Care Load Analytics</h2><small>System Capacity &amp; Care Load Analytics</small>
+  <label>Start date</label><input type="date" id="d0">
+  <label>End date</label><input type="date" id="d1">
+  <label>Time granularity</label>
+  <select id="gran"><option value="D">Daily</option><option value="W">Weekly</option><option value="M">Monthly</option></select>
+  <label>Metrics to plot</label>
+  <div class="chk"><input type="checkbox" id="m_total" checked> Total system load</div>
+  <div class="chk"><input type="checkbox" id="m_cbp" checked> CBP custody</div>
+  <div class="chk"><input type="checkbox" id="m_hhs" checked> HHS care</div>
+  <div class="chk"><input type="checkbox" id="m_net"> Net daily intake</div>
+</aside>
+<main>
+  <h1>System Capacity &amp; Care Load Analytics for Unaccompanied Children</h1>
+  <div class="sub" id="sub"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabs" id="tabs">
+    <button class="on" data-t="t1">System Load Overview</button>
+    <button data-t="t2">CBP vs HHS Comparison</button>
+    <button data-t="t3">Net Intake &amp; Backlog Trends</button>
+    <button data-t="t4">Data &amp; Anomalies</button>
+  </div>
+  <div class="pane on" id="t1">
+    <h3>Total System Load Over Time</h3><div class="ch" id="c1"></div>
+    <div class="grid2"><div><h3>Selected Metrics</h3><div class="ch" id="c2"></div></div>
+    <div><h3>Growth Rate (reading-over-reading, %)</h3><div class="ch" id="c3"></div></div></div>
+  </div>
+  <div class="pane" id="t2">
+    <h3>CBP Custody vs. HHS Care</h3><div class="ch" id="c4"></div>
+    <h3>Transfers into HHS vs. Discharges from HHS</h3><div class="ch" id="c5"></div>
+  </div>
+  <div class="pane" id="t3">
+    <h3>Net Daily Intake (Transfers In − Discharges)</h3><div class="ch" id="c6"></div>
+    <div class="grid2"><div><h3>Rolling Averages — Total System Load</h3><div class="ch" id="c7"></div></div>
+    <div><h3>Volatility (14-reading rolling std. dev.)</h3><div class="ch" id="c8"></div></div></div>
+  </div>
+  <div class="pane" id="t4">
+    <div class="kpis" id="anom"></div>
+    <p class="note">CBP custody is a point-in-time snapshot while transfers out is a same-day flow total, so transfers exceeding custody can reflect normal same-day turnover rather than a data error. Flagged for transparency.</p>
+    <h3>Most recent 60 reported days in window</h3><div style="overflow-x:auto"><table id="tbl"></table></div>
+  </div>
+</main>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const fmt=(n,d=0)=>n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const mean=a=>a.reduce((s,v)=>s+v,0)/a.length;
+const sd=a=>{const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))};
+const sum=a=>a.reduce((s,v)=>s+v,0);
+function roll(a,w){return a.map((_,i)=>i<1?null:mean(a.slice(Math.max(0,i-w+1),i+1)))}
+function rollSd(a,w){return a.map((_,i)=>i<6?null:sd(a.slice(Math.max(0,i-w+1),i+1)))}
+let ALL=[];
+const L={paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#e6e9f0',size:11},margin:{t:10,r:50,b:40,l:50},
+  xaxis:{gridcolor:'#262d3d'},yaxis:{gridcolor:'#262d3d'},legend:{orientation:'h',y:-0.2},hovermode:'x unified'};
+const plot=(id,tr,extra={})=>Plotly.react(id,tr,{...L,...extra},{responsive:true,displayModeBar:false});
+
+function key(s,g){
+  if(g==='D')return s;
+  if(g==='M')return s.slice(0,7)+'-01';
+  const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));return d.toISOString().slice(0,10);
+}
+function aggregate(rows,g){
+  const m=new Map();
+  rows.forEach(r=>{const k=key(r.d,g);if(!m.has(k))m.set(k,[]);m.get(k).push(r)});
+  return [...m.entries()].map(([k,a])=>({d:k,cbp:mean(a.map(r=>r.c)),hhs:mean(a.map(r=>r.h)),
+    total:mean(a.map(r=>r.c+r.h)),trans:sum(a.map(r=>r.t)),disch:sum(a.map(r=>r.x)),net:sum(a.map(r=>r.t-r.x))}));
+}
+function render(){
+  const d0=$('d0').value,d1=$('d1').value,g=$('gran').value;
+  const rows=ALL.filter(r=>r.d>=d0&&r.d<=d1);
+  if(!rows.length){$('kpis').innerHTML='<p>No reported data in selected range.</p>';return}
+  $('sub').textContent=`Data window: ${d0} to ${d1} • ${rows.length} reported observation day(s) • Granularity: ${{D:'Daily',W:'Weekly',M:'Monthly'}[g]}`;
+  const tot=rows.map(r=>r.c+r.h),net=rows.map(r=>r.t-r.x);
+  const latest=tot[tot.length-1],p30=mean(net.slice(-30));
+  const vol=sd(tot)/mean(tot)*100,bk=net.filter(v=>v>0).length/net.length*100,dor=sum(rows.map(r=>r.x))/sum(rows.map(r=>r.t));
+  const K=(a,b,c)=>`<div class="kpi"><span>${a}</span><b>${b}</b><i>${c}</i></div>`;
+  $('kpis').innerHTML=K('Total Children Under Care',fmt(latest),'CBP + HHS, latest day')+
+    K('Net Intake Pressure (30-day)',(p30>=0?'+':'')+fmt(p30,1)+'/day','transfers in − discharges')+
+    K('Care Load Volatility Index',fmt(vol,1)+'%','std ÷ mean of total load')+
+    K('Backlog Accumulation Rate',fmt(bk,1)+'%','days with positive net intake')+
+    K('Discharge Offset Ratio',fmt(dor,2)+'×','discharges ÷ transfers in');
+  const A=aggregate(rows,g),x=A.map(a=>a.d);
+  plot('c1',[{x,y:A.map(a=>a.total),name:'Total system load',line:{color:'#3b82f6',width:2}}]);
+  const tr=[];
+  if($('m_total').checked)tr.push({x,y:A.map(a=>a.total),name:'Total system load',line:{color:'#3b82f6'}});
+  if($('m_cbp').checked)tr.push({x,y:A.map(a=>a.cbp),name:'CBP custody',line:{color:'#ef4444'}});
+  if($('m_hhs').checked)tr.push({x,y:A.map(a=>a.hhs),name:'HHS care',line:{color:'#10b981'}});
+  if($('m_net').checked)tr.push({x,y:A.map(a=>a.net),name:'Net daily intake',line:{color:'#a78bfa'},yaxis:'y2'});
+  plot('c2',tr,{yaxis2:{overlaying:'y',side:'right',showgrid:false}});
+  const gr=A.map((a,i)=>i?(a.total/A[i-1].total-1)*100:null);
+  plot('c3',[{x,y:gr,type:'bar',marker:{color:gr.map(v=>v>0?'#ef4444':'#3b82f6')},name:'% change'}]);
+  plot('c4',[{x,y:A.map(a=>a.cbp),name:'CBP custody',line:{color:'#ef4444'}},{x,y:A.map(a=>a.hhs),name:'HHS care',line:{color:'#10b981'},yaxis:'y2'}],
+    {yaxis:{title:'CBP custody',gridcolor:'#262d3d'},yaxis2:{title:'HHS care',overlaying:'y',side:'right',showgrid:false}});
+  plot('c5',[{x,y:A.map(a=>a.trans),type:'bar',name:'Transferred into HHS',marker:{color:'#f59e0b'}},{x,y:A.map(a=>a.disch),type:'bar',name:'Discharged from HHS',marker:{color:'#0ea5e9'}}],{barmode:'group'});
+  plot('c6',[{x,y:A.map(a=>a.net),type:'bar',marker:{color:A.map(a=>a.net>0?'#ef4444':'#3b82f6')},name:'Net intake'}]);
+  const dx=rows.map(r=>r.d);
+  plot('c7',[{x:dx,y:roll(tot,7),name:'7-reading avg',line:{color:'#0ea5e9'}},{x:dx,y:roll(tot,14),name:'14-reading avg',line:{color:'#3b82f6'}}]);
+  plot('c8',[{x:dx,y:rollSd(tot,14),name:'Rolling std',fill:'tozeroy',line:{color:'#a78bfa'}}]);
+  const f1=rows.filter(r=>r.t>r.c).length;
+  $('anom').innerHTML=K('Reported days in window',rows.length,'')+K('Transfers > CBP custody (flag)',f1,'see note below')+K('Discharged > HHS care (flag)',rows.filter(r=>r.x>r.h).length,'');
+  $('tbl').innerHTML='<tr><th>Date</th><th>Apprehended</th><th>CBP custody</th><th>Transferred out</th><th>HHS care</th><th>Discharged</th><th>Total load</th><th>Net intake</th></tr>'+
+    rows.slice(-60).reverse().map(r=>`<tr><td>${r.d}</td><td>${r.i}</td><td>${r.c}</td><td>${r.t}</td><td>${fmt(r.h)}</td><td>${r.x}</td><td>${fmt(r.c+r.h)}</td><td>${r.t-r.x}</td></tr>`).join('');
+}
+fetch('data.json').then(r=>r.json()).then(j=>{
+  ALL=j.map(r=>({d:r[0],i:r[1],c:r[2],t:r[3],h:r[4],x:r[5]})).sort((a,b)=>a.d<b.d?-1:1);
+  $('d0').value=$('d0').min=ALL[0].d;$('d1').value=$('d1').max=ALL[ALL.length-1].d;
+  $('d0').max=$('d1').max;$('d1').min=$('d0').min;
+  ['d0','d1','gran','m_total','m_cbp','m_hhs','m_net'].forEach(id=>$(id).addEventListener('change',render));
+  $('tabs').addEventListener('click',e=>{const t=e.target.dataset.t;if(!t)return;
+    document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b===e.target));
+    document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id===t));render()});
+  render();
+});
+</script>
+</body>
+</html>
